@@ -201,7 +201,18 @@ export async function listOrders(
     .leftJoin(schema.shops, eq(schema.orders.shopId, schema.shops.id));
 
   const hasMore = orders.length > limit;
-  const items = orders.slice(0, limit).map(({ orders: o, shops: s }) => {
+  const pageOrders = orders.slice(0, limit);
+  const pageIds = pageOrders.map(({ orders: o }) => o.id);
+  const itemCounts = new Map<string, number>();
+  if (pageIds.length) {
+    const counted = await deps.db
+      .select({ orderId: schema.orderLineItems.orderId, n: sql<number>`count(*)::int` })
+      .from(schema.orderLineItems)
+      .where(inArray(schema.orderLineItems.orderId, pageIds))
+      .groupBy(schema.orderLineItems.orderId);
+    for (const c of counted) itemCounts.set(c.orderId, Number(c.n));
+  }
+  const items = pageOrders.map(({ orders: o, shops: s }) => {
     const recipient = o.recipient as any;
     return {
       id: o.id,
@@ -210,7 +221,7 @@ export async function listOrders(
       status: o.status,
       currency: o.currency,
       totalAmount: o.totalAmount?.toString() || null,
-      itemCount: 0, // Will be computed separately if needed
+      itemCount: itemCounts.get(o.id) ?? 0,
       createdAt: o.ttsCreatedAt.toISOString(),
       rtsSlaAt: o.rtsSlaAt?.toISOString() || null,
       shippingType: o.shippingType,
@@ -343,188 +354,120 @@ export async function getFulfillmentQueue(
   deps: Deps,
   filters: FulfillmentQueueFilters,
 ): Promise<FulfillmentQueuePage> {
-  const limit = Math.min(filters.limit ?? 50, 200);
+  const limit = Math.min(Math.max(filters.limit ?? 50, 1), 200);
   const now = deps.now();
+  const in24h = new Date(now.getTime() + 24 * 60 * 60 * 1000);
 
-  // Parse cursor
-  let cursorSlaAt: Date | null = null;
-  let cursorId: string | undefined;
-  if (filters.cursor) {
-    const [slaAt, id] = Buffer.from(filters.cursor, "base64url").toString().split("|");
-    if (id) {
-      cursorSlaAt = slaAt ? new Date(slaAt) : null;
-      cursorId = id;
-    }
-  }
-
-  // Build filter conditions
-  const conditions: any[] = [eq(schema.orders.status, "AWAITING_SHIPMENT")];
-
-  if (filters.shopId) conditions.push(eq(schema.packages.shopId, filters.shopId));
-  if (filters.warehouseId) conditions.push(eq(schema.packages.warehouseId, filters.warehouseId));
-  if (filters.shippingType) conditions.push(eq(schema.packages.shippingType, filters.shippingType));
-  if (filters.deliveryOptionId) conditions.push(eq(schema.packages.deliveryOptionId, filters.deliveryOptionId));
-
+  // One row per unshipped package whose orders all await shipment (FBT excluded; NULL type is not FBT).
+  const where = [
+    sql`p.shipped_at IS NULL`,
+    sql`o.status = 'AWAITING_SHIPMENT'`,
+    sql`o.fulfillment_type IS DISTINCT FROM 'FULFILLMENT_BY_TIKTOK'`,
+  ];
+  if (filters.shopId) where.push(sql`p.shop_id = ${filters.shopId}`);
+  if (filters.warehouseId) where.push(sql`p.warehouse_id = ${filters.warehouseId}`);
+  if (filters.shippingType) where.push(sql`p.shipping_type = ${filters.shippingType}`);
+  if (filters.deliveryOptionId) where.push(sql`p.delivery_option_id = ${filters.deliveryOptionId}`);
   if (filters.sku) {
-    conditions.push(
-      sql`EXISTS (SELECT 1 FROM order_line_items WHERE order_id = ${schema.orders.id} AND (seller_sku = ${filters.sku} OR sku_id = ${filters.sku}))`
-    );
+    where.push(sql`EXISTS (SELECT 1 FROM package_line_items pli JOIN order_line_items li ON li.id = pli.line_item_id
+      WHERE pli.package_id = p.id AND (li.seller_sku = ${filters.sku} OR li.sku_id = ${filters.sku}))`);
   }
 
-  // Exclude FBT
-  conditions.push(sql`${schema.orders.fulfillmentType} != 'FULFILLMENT_BY_TIKTOK'`);
+  const grouped = sql`
+    SELECT p.id AS package_id, p.shop_id, p.status, p.shipping_type, p.warehouse_id, p.handover_method,
+           min(o.rts_sla_at) AS rts_sla_at,
+           array_agg(DISTINCT o.id ORDER BY o.id) AS order_ids,
+           max(o.delivery_option_name) AS delivery_option_name,
+           CASE WHEN min(o.rts_sla_at) < ${now.toISOString()}::timestamptz THEN 'overdue'
+                WHEN min(o.rts_sla_at) < ${in24h.toISOString()}::timestamptz THEN 'lt24h'
+                ELSE 'later' END AS sla_bucket
+    FROM packages p
+    JOIN order_packages op ON op.package_id = p.id
+    JOIN orders o ON o.id = op.order_id
+    WHERE ${sql.join(where, sql` AND `)}
+    GROUP BY p.id`;
 
-  // Exclude already shipped
-  conditions.push(isNull(schema.packages.shippedAt));
-
-  // Apply SLA filter if specified
-  if (filters.sla) {
-    if (filters.sla === "overdue") {
-      conditions.push(lt(schema.orders.rtsSlaAt, now));
-    } else if (filters.sla === "lt24h") {
-      conditions.push(and(
-        gte(schema.orders.rtsSlaAt, now),
-        lt(schema.orders.rtsSlaAt, new Date(now.getTime() + 24 * 60 * 60 * 1000)),
-      ));
-    } else if (filters.sla === "later") {
-      conditions.push(gte(schema.orders.rtsSlaAt, new Date(now.getTime() + 24 * 60 * 60 * 1000)));
-    }
-  }
-
-  // Keyset pagination
-  if (cursorId) {
-    if (cursorSlaAt) {
-      conditions.push(
-        or(
-          lt(schema.orders.rtsSlaAt, cursorSlaAt),
-          and(eq(schema.orders.rtsSlaAt, cursorSlaAt), lt(schema.packages.id, cursorId)),
-        ),
-      );
+  // Cursor: (rts_sla_at asc nulls last, package_id asc). "~" encodes a NULL sla.
+  const page = [sql`TRUE`];
+  if (filters.sla) page.push(sql`q.sla_bucket = ${filters.sla}`);
+  if (filters.cursor) {
+    const [slaRaw, id] = Buffer.from(filters.cursor, "base64url").toString().split("|");
+    if (!id) throw new OmsError("invalid_cursor", "Invalid cursor", 400);
+    if (slaRaw === "~") {
+      page.push(sql`q.rts_sla_at IS NULL AND q.package_id > ${id}`);
     } else {
-      conditions.push(or(
-        lt(schema.orders.rtsSlaAt, sql`NULL`),
-        and(
-          sql`${schema.orders.rtsSlaAt} IS NULL`,
-          lt(schema.packages.id, cursorId),
-        ),
-      ));
+      const slaAt = new Date(slaRaw!);
+      if (Number.isNaN(slaAt.getTime())) throw new OmsError("invalid_cursor", "Invalid cursor", 400);
+      // Raw params go to the driver untyped: pass ISO strings and cast (postgres-js rejects Date here).
+      const at = slaAt.toISOString();
+      page.push(sql`(q.rts_sla_at IS NULL OR q.rts_sla_at > ${at}::timestamptz OR (q.rts_sla_at = ${at}::timestamptz AND q.package_id > ${id}))`);
     }
   }
 
-  // Query packages with their orders
-  const results = await deps.db
-    .select({
-      packageId: schema.packages.id,
-      shopId: schema.packages.shopId,
-      orderId: schema.orders.id,
-      rtsSlaAt: schema.orders.rtsSlaAt,
-      status: schema.packages.status,
-      shippingType: schema.packages.shippingType,
-      warehouseId: schema.packages.warehouseId,
-      deliveryOptionName: schema.orders.deliveryOptionName,
-      handoverMethod: schema.packages.handoverMethod,
-    })
-    .from(schema.packages)
-    .innerJoin(schema.orderPackages, eq(schema.packages.id, schema.orderPackages.packageId))
-    .innerJoin(schema.orders, eq(schema.orderPackages.orderId, schema.orders.id))
-    .where(conditions.length > 0 ? and(...conditions) : undefined)
-    .orderBy(asc(schema.orders.rtsSlaAt), asc(schema.packages.id))
-    .limit(limit + 1);
+  type Row = {
+    package_id: string; shop_id: string; status: string | null; shipping_type: string | null;
+    warehouse_id: string | null; handover_method: string | null; rts_sla_at: Date | string | null;
+    order_ids: string[]; delivery_option_name: string | null; sla_bucket: SlaBucket;
+  };
+  const rows = rowsOf<Row>(await deps.db.execute(sql`
+    SELECT * FROM (${grouped}) q
+    WHERE ${sql.join(page, sql` AND `)}
+    ORDER BY q.rts_sla_at ASC NULLS LAST, q.package_id ASC
+    LIMIT ${limit + 1}`));
+  const pageRows = rows.slice(0, limit);
 
-  // Group by package and aggregate orders
-  const packageMap = new Map<
-    string,
-    {
-      orders: Set<string>;
-      rtsSlaAt: Date | null;
-      status: string | null;
-      shippingType: string | null;
-      warehouseId: string | null;
-      deliveryOptionName: string | null;
-      handoverMethod: string | null;
-      shopId: string;
-    }
-  >();
-
-  for (const row of results.slice(0, limit)) {
-    if (!packageMap.has(row.packageId)) {
-      packageMap.set(row.packageId, {
-        orders: new Set(),
-        rtsSlaAt: row.rtsSlaAt,
-        status: row.status,
-        shippingType: row.shippingType,
-        warehouseId: row.warehouseId,
-        deliveryOptionName: row.deliveryOptionName,
-        handoverMethod: row.handoverMethod,
-        shopId: row.shopId,
-      });
-    }
-    packageMap.get(row.packageId)!.orders.add(row.orderId);
+  // Line items per package in one query.
+  const ids = pageRows.map((r) => r.package_id);
+  const lineItems = ids.length
+    ? await deps.db
+        .select({ packageId: schema.packageLineItems.packageId, sellerSku: schema.orderLineItems.sellerSku, skuId: schema.orderLineItems.skuId })
+        .from(schema.packageLineItems)
+        .innerJoin(schema.orderLineItems, eq(schema.packageLineItems.lineItemId, schema.orderLineItems.id))
+        .where(inArray(schema.packageLineItems.packageId, ids))
+    : [];
+  const itemsByPackage = new Map<string, { count: number; skus: Set<string> }>();
+  for (const li of lineItems) {
+    const entry = itemsByPackage.get(li.packageId) ?? { count: 0, skus: new Set<string>() };
+    entry.count++;
+    entry.skus.add(li.sellerSku ?? li.skuId);
+    itemsByPackage.set(li.packageId, entry);
   }
 
-  // Get SKUs for each package
-  const packageIds = Array.from(packageMap.keys());
-  const lineItems = await deps.db
-    .select({
-      packageId: schema.packageLineItems.packageId,
-      sellerSku: schema.orderLineItems.sellerSku,
-    })
-    .from(schema.packageLineItems)
-    .innerJoin(schema.orderLineItems, eq(schema.packageLineItems.lineItemId, schema.orderLineItems.id))
-    .where(inArray(schema.packageLineItems.packageId, packageIds));
+  const iso = (v: Date | string | null) => (v == null ? null : new Date(v).toISOString());
+  const items: FulfillmentQueueItem[] = pageRows.map((r) => ({
+    packageId: r.package_id,
+    shopId: r.shop_id,
+    orderIds: r.order_ids,
+    status: r.status,
+    shippingType: r.shipping_type,
+    warehouseId: r.warehouse_id,
+    deliveryOptionName: r.delivery_option_name,
+    handoverMethod: r.handover_method,
+    rtsSlaAt: iso(r.rts_sla_at),
+    slaBucket: r.sla_bucket,
+    itemCount: itemsByPackage.get(r.package_id)?.count ?? 0,
+    skus: [...(itemsByPackage.get(r.package_id)?.skus ?? [])],
+  }));
 
-  const skusByPackage = new Map<string, Set<string>>();
-  let totalLineItemCount = 0;
-  for (const item of lineItems) {
-    if (!skusByPackage.has(item.packageId)) skusByPackage.set(item.packageId, new Set());
-    if (item.sellerSku) skusByPackage.get(item.packageId)!.add(item.sellerSku);
-    totalLineItemCount++;
-  }
+  // Bucket counts use the same filters except `sla` and the cursor.
+  const counts: Record<SlaBucket, number> = { overdue: 0, lt24h: 0, later: 0 };
+  const countRows = rowsOf<{ sla_bucket: SlaBucket; n: number | string }>(
+    await deps.db.execute(sql`SELECT q.sla_bucket, count(*) AS n FROM (${grouped}) q GROUP BY q.sla_bucket`),
+  );
+  for (const c of countRows) counts[c.sla_bucket] = Number(c.n);
 
-  // Build result items
-  const items: FulfillmentQueueItem[] = Array.from(packageMap.entries()).map(([packageId, data]) => {
-    const slaBucket = getSlaBucket(data.rtsSlaAt, now);
-    const skus = Array.from(skusByPackage.get(packageId) || []);
-    return {
-      packageId,
-      shopId: data.shopId,
-      orderIds: Array.from(data.orders),
-      status: data.status,
-      shippingType: data.shippingType,
-      warehouseId: data.warehouseId,
-      deliveryOptionName: data.deliveryOptionName,
-      handoverMethod: data.handoverMethod,
-      rtsSlaAt: data.rtsSlaAt?.toISOString() || null,
-      slaBucket,
-      itemCount: skus.length,
-      skus,
-    };
-  });
-
-  // Compute counts without the sla filter
-  let counts = { overdue: 0, lt24h: 0, later: 0 };
-  if (!filters.sla) {
-    const countConditions = conditions.filter((c) => !c.includes?.("rtsSlaAt"));
-    const countResults = await deps.db
-      .select({ rtsSlaAt: schema.orders.rtsSlaAt })
-      .from(schema.packages)
-      .innerJoin(schema.orderPackages, eq(schema.packages.id, schema.orderPackages.packageId))
-      .innerJoin(schema.orders, eq(schema.orderPackages.orderId, schema.orders.id))
-      .where(countConditions.length > 0 ? and(...countConditions) : undefined);
-
-    for (const row of countResults) {
-      const bucket = getSlaBucket(row.rtsSlaAt, now);
-      counts[bucket]++;
-    }
-  }
-
-  let nextCursor: string | null = null;
-  if (results.length > limit && items.length > 0) {
-    const lastItem = items[items.length - 1]!;
-    nextCursor = Buffer.from(`${lastItem.rtsSlaAt || ""}|${lastItem.packageId}`).toString("base64url");
-  }
+  const last = pageRows[pageRows.length - 1];
+  const nextCursor =
+    rows.length > limit && last
+      ? Buffer.from(`${iso(last.rts_sla_at) ?? "~"}|${last.package_id}`).toString("base64url")
+      : null;
 
   return { items, nextCursor, counts };
+}
+
+/** postgres-js returns an array; PGlite returns { rows }. */
+function rowsOf<T>(result: unknown): T[] {
+  return (Array.isArray(result) ? result : (result as { rows: T[] }).rows) as T[];
 }
 
 /** Create a jobs row (type "order_export") and enqueue Queues.orderExport. */

@@ -7,3 +7,4 @@ coverage/
 *.log
 var/
 .claude/worktrees/
+dump.rdb

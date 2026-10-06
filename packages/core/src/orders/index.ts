@@ -195,13 +195,13 @@ function normalizeRecipientAddress(addr: RecipientAddress) {
 }
 
 /** Fetch Get Order Detail (batched by 50) and upsert. Used after ship actions and by webhook processing. */
-export async function refreshOrders(_deps: Deps, _shopId: string, _orderIds: string[]): Promise<void> {
-  if (_orderIds.length === 0) return;
+export async function refreshOrders(deps: Deps, shopId: string, orderIds: string[]): Promise<void> {
+  if (orderIds.length === 0) return;
 
-  const shop = await getShopContext(_deps, _shopId);
-  const api = new OrdersApi(_deps.tts);
-  const orders = await api.getDetails(shop, _orderIds);
-  await upsertOrders(_deps, _shopId, orders);
+  const shop = await getShopContext(deps, shopId);
+  const api = new OrdersApi(deps.tts);
+  const orders = await api.getDetails(shop, orderIds);
+  await upsertOrders(deps, shopId, orders);
 }
 
 /** Store a verified webhook (dedupe on tts_notification_id) and enqueue Queues.webhook. */

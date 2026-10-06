@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+
 import { apiPost } from '../api';
 import type { SessionUser } from '@oms/core/types';
 
@@ -8,7 +8,6 @@ export function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -16,13 +15,14 @@ export function LoginPage() {
     setLoading(true);
 
     try {
-      const user = await apiPost<SessionUser>('/v1/auth/login', {
+      await apiPost<SessionUser>('/v1/auth/login', {
         email,
         password,
       });
       setEmail('');
       setPassword('');
-      navigate('/orders');
+      // Full navigation so the app shell re-reads the session (GET /v1/me) with the new cookie.
+      window.location.assign('/orders');
     } catch (err: any) {
       setError(err.message || 'Login failed');
     } finally {

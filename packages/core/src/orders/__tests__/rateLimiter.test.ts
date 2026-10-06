@@ -85,3 +85,25 @@ describe("InMemoryRateLimiter", () => {
     expect(elapsed).toBeLessThan(50);
   });
 });
+
+describe.skipIf(!process.env.REDIS_URL)("RedisRateLimiter", () => {
+  it("allows the burst, then throttles to the refill rate", async () => {
+    const { createRedisRateLimiter } = await import("../rateLimiter.js");
+    const limiter = createRedisRateLimiter({
+      redisUrl: process.env.REDIS_URL!,
+      ratePerSecond: 20,
+      burst: 3,
+      keyPrefix: `test:${Math.random().toString(36).slice(2)}:`,
+    });
+    try {
+      const t0 = Date.now();
+      for (let i = 0; i < 3; i++) await limiter.acquire("k");
+      expect(Date.now() - t0).toBeLessThan(100);
+      for (let i = 0; i < 4; i++) await limiter.acquire("k");
+      // 4 more tokens at 20/s ≈ 200ms
+      expect(Date.now() - t0).toBeGreaterThanOrEqual(150);
+    } finally {
+      await limiter.close();
+    }
+  });
+});

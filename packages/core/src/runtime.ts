@@ -3,6 +3,7 @@ import { AuthApi, TikTokClient } from "@oms/tiktok-sdk";
 import { Queue } from "bullmq";
 import type { CoreConfig, Deps } from "./context.js";
 import { TokenCipher } from "./crypto.js";
+import { createRedisRateLimiter } from "./orders/rateLimiter.js";
 import type { EnqueueOptions, QueueName, QueueProducer } from "./queues.js";
 
 /** BullMQ-backed producer. One Queue instance per name, created lazily. */
@@ -48,15 +49,27 @@ export function createDepsFromEnv(env: NodeJS.ProcessEnv = process.env) {
     fileStorageDir: env.FILE_STORAGE_DIR ?? "./var/files",
   };
   const { db, close: closeDb } = createDb(env.DATABASE_URL ?? "postgres://oms:oms@localhost:5432/oms");
-  const queues = new BullMqProducer(env.REDIS_URL ?? "redis://localhost:6379");
+  const redisUrl = env.REDIS_URL ?? "redis://localhost:6379";
+  const queues = new BullMqProducer(redisUrl);
+  const rateLimiter = createRedisRateLimiter({
+    redisUrl,
+    ratePerSecond: Number(env.TTS_RATE_PER_SECOND ?? 10),
+    burst: Number(env.TTS_RATE_BURST ?? 20),
+  });
   const deps: Deps = {
     db,
     config,
     cipher: TokenCipher.fromEnv(env.TOKEN_ENCRYPTION_KEY),
     queues,
-    tts: new TikTokClient({ appKey: config.appKey, appSecret: config.appSecret, baseUrl: env.TTS_API_BASE_URL }),
+    tts: new TikTokClient({
+      appKey: config.appKey,
+      appSecret: config.appSecret,
+      baseUrl: env.TTS_API_BASE_URL,
+      // Shared across API and worker processes; key = shop cipher + API group (#25).
+      rateLimiter,
+    }),
     auth: new AuthApi({ appKey: config.appKey, appSecret: config.appSecret, authBaseUrl: env.TTS_AUTH_BASE_URL }),
     now: () => new Date(),
   };
-  return { deps, close: async () => { await queues.close(); await closeDb(); } };
+  return { deps, close: async () => { await queues.close(); await rateLimiter.close(); await closeDb(); } };
 }

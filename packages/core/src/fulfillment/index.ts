@@ -87,7 +87,7 @@ export async function withIdempotency<T>(
       // Allow retry: update to in_progress atomically
       const updated = await deps.db
         .update(schema.idempotencyKeys)
-        .set({ status: "in_progress", updatedAt: new Date() })
+        .set({ status: "in_progress", updatedAt: deps.now() })
         .where(and(eq(schema.idempotencyKeys.key, key), eq(schema.idempotencyKeys.status, "failed")))
         .returning();
 
@@ -131,7 +131,7 @@ export async function withIdempotency<T>(
       .set({
         status: "succeeded",
         response: result as unknown,
-        updatedAt: new Date(),
+        updatedAt: deps.now(),
       })
       .where(eq(schema.idempotencyKeys.key, key));
 
@@ -163,7 +163,7 @@ export async function withIdempotency<T>(
       .update(schema.idempotencyKeys)
       .set({
         status: "failed",
-        updatedAt: new Date(),
+        updatedAt: deps.now(),
       })
       .where(eq(schema.idempotencyKeys.key, key));
 
@@ -368,9 +368,9 @@ export async function shipPackage(
           handoverMethod: detail.handover_method || resolvedHandoverMethod,
           pickupSlotStart: detail.pickup_slot ? detail.pickup_slot.start_time : (resolvedPickupSlot?.start || null),
           pickupSlotEnd: detail.pickup_slot ? detail.pickup_slot.end_time : (resolvedPickupSlot?.end || null),
-          shippedAt: new Date(),
+          shippedAt: deps.now(),
           shippedRecipientHash: recipientHash,
-          updatedAt: new Date(),
+          updatedAt: deps.now(),
         })
         .where(eq(schema.packages.id, packageId));
 
@@ -389,7 +389,7 @@ export async function shipPackage(
     },
   );
 
-  return result.result;
+  return { ...result.result, replayed: result.replayed };
 }
 
 /** Create a jobs row (type "batch_ship") with one job_item per package and enqueue Queues.batchShip. (#58) */
@@ -610,9 +610,9 @@ export async function runBatchShip(deps: Deps, jobId: string): Promise<void> {
               handoverMethod: detail.handover_method,
               pickupSlotStart: detail.pickup_slot ? detail.pickup_slot.start_time : null,
               pickupSlotEnd: detail.pickup_slot ? detail.pickup_slot.end_time : null,
-              shippedAt: new Date(),
+              shippedAt: deps.now(),
               shippedRecipientHash: recipientHash,
-              updatedAt: new Date(),
+              updatedAt: deps.now(),
             })
             .where(eq(schema.packages.id, shipItem.id));
 
@@ -654,7 +654,7 @@ export async function runBatchShip(deps: Deps, jobId: string): Promise<void> {
       status,
       succeeded,
       failed,
-      finishedAt: new Date(),
+      finishedAt: deps.now(),
     })
     .where(eq(schema.jobs.id, jobId));
 }
@@ -805,7 +805,7 @@ export async function runLabelJob(deps: Deps, jobId: string): Promise<void> {
             .update(schema.packages)
             .set({
               labelUrl,
-              labelFetchedAt: new Date(),
+              labelFetchedAt: deps.now(),
             })
             .where(eq(schema.packages.id, item.targetId));
         }
@@ -871,7 +871,7 @@ export async function runLabelJob(deps: Deps, jobId: string): Promise<void> {
       status,
       succeeded,
       failed,
-      finishedAt: new Date(),
+      finishedAt: deps.now(),
       result: { filePath, contentType: "application/pdf", pages: pages.length },
     })
     .where(eq(schema.jobs.id, jobId));

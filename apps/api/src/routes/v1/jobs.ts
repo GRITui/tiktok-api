@@ -1,3 +1,6 @@
+import { basename, resolve, sep } from "node:path";
+import { jobs } from "@oms/db";
+import { eq } from "drizzle-orm";
 import { getJob, OmsError, type Deps } from "@oms/core";
 import type { FastifyInstance } from "fastify";
 import { createReadStream } from "node:fs";
@@ -30,22 +33,24 @@ export async function jobRoutes(app: FastifyInstance, opts: { deps: Deps }) {
       const job = await getJob(opts.deps, req.params.id);
       if (!job) throw new OmsError("not_found", "Job not found", 404);
 
-      if (!job.downloadUrl) throw new OmsError("not_found", "Download not available", 404);
+      const [row] = await opts.deps.db.select({ result: jobs.result }).from(jobs).where(eq(jobs.id, req.params.id));
+      const result = (row?.result ?? null) as { filePath?: string; contentType?: string } | null;
+      if (!result?.filePath) throw new OmsError("not_found", "Download not available", 404);
 
-      // Parse the job ID and construct the file path based on job type
-      const filePath = `${opts.deps.config.fileStorageDir}/exports/${req.params.id}.csv`;
-
-      // Check if file exists
+      // Only serve files inside the configured storage dir.
+      const root = resolve(opts.deps.config.fileStorageDir);
+      const filePath = resolve(result.filePath);
+      if (!filePath.startsWith(root + sep)) throw new OmsError("not_found", "File not found", 404);
       try {
         await stat(filePath);
-      } catch (e) {
+      } catch {
         throw new OmsError("not_found", "File not found", 404);
       }
 
-      // Determine content type based on job type
-      const contentType = "text/csv";
+      const contentType = result.contentType ?? (filePath.endsWith(".pdf") ? "application/pdf" : "text/csv");
       reply.type(contentType);
-      reply.send(createReadStream(filePath));
+      reply.header("content-disposition", `attachment; filename="${basename(filePath)}"`);
+      return reply.send(createReadStream(filePath));
     },
   );
 }

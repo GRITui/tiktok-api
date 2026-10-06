@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { apiFetch, apiPost, apiGet, ApiErrorClass } from './api';
+import { apiFetch, apiPost, apiGet, ApiErrorClass, nav } from './api';
 
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
@@ -58,5 +58,32 @@ describe('API module', () => {
       expect((err as ApiErrorClass).code).toBe('INVALID_REQUEST');
       expect((err as ApiErrorClass).message).toBe('Invalid request');
     }
+  });
+});
+
+describe('401 handling', () => {
+  const unauthorized = (body: unknown) => ({ ok: false, status: 401, json: async () => body });
+
+  beforeEach(() => {
+    mockFetch.mockClear();
+    window.history.pushState({}, '', '/orders');
+  });
+
+  it('does not redirect for the session probe or login call, and keeps the server message', async () => {
+    const assign = vi.spyOn(nav, 'toLogin').mockImplementation(() => {});
+    mockFetch.mockResolvedValueOnce(unauthorized({ error: { code: 'unauthenticated', message: 'Login required' } }));
+    await expect(apiGet('/v1/me')).rejects.toMatchObject({ code: 'unauthenticated' });
+    mockFetch.mockResolvedValueOnce(unauthorized({ error: { code: 'invalid_credentials', message: 'Invalid email or password' } }));
+    await expect(apiPost('/v1/auth/login', {})).rejects.toMatchObject({ message: 'Invalid email or password' });
+    expect(assign).not.toHaveBeenCalled();
+    assign.mockRestore();
+  });
+
+  it('redirects to /login when another request finds the session expired', async () => {
+    const assign = vi.spyOn(nav, 'toLogin').mockImplementation(() => {});
+    mockFetch.mockResolvedValueOnce(unauthorized({ error: { code: 'unauthenticated', message: 'Login required' } }));
+    await expect(apiGet('/v1/orders')).rejects.toBeInstanceOf(ApiErrorClass);
+    expect(assign).toHaveBeenCalledTimes(1);
+    assign.mockRestore();
   });
 });

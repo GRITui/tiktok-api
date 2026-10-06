@@ -42,7 +42,7 @@ export async function syncLogistics(deps: Deps, shopId: string): Promise<{ wareh
       defaultHandoverMethod: existing?.defaultHandoverMethod ?? null,
       address: wh.address,
       raw: wh,
-      syncedAt: new Date(),
+      syncedAt: deps.now(),
     }).onConflictDoUpdate({
       target: [warehouses.shopId, warehouses.id],
       set: {
@@ -50,7 +50,7 @@ export async function syncLogistics(deps: Deps, shopId: string): Promise<{ wareh
         type: wh.type,
         address: wh.address,
         raw: wh,
-        syncedAt: new Date(),
+        syncedAt: deps.now(),
         // Don't overwrite is_default or defaultHandoverMethod if they were set by user
       },
     });
@@ -69,14 +69,14 @@ export async function syncLogistics(deps: Deps, shopId: string): Promise<{ wareh
         name: opt.name!,
         type: opt.type,
         raw: opt,
-        syncedAt: new Date(),
+        syncedAt: deps.now(),
       }).onConflictDoUpdate({
         target: [deliveryOptions.shopId, deliveryOptions.warehouseId, deliveryOptions.id],
         set: {
           name: opt.name!,
           type: opt.type,
           raw: opt,
-          syncedAt: new Date(),
+          syncedAt: deps.now(),
         },
       });
 
@@ -93,13 +93,13 @@ export async function syncLogistics(deps: Deps, shopId: string): Promise<{ wareh
           id: prov.id!,
           name: prov.name!,
           raw: prov,
-          syncedAt: new Date(),
+          syncedAt: deps.now(),
         }).onConflictDoUpdate({
           target: [shippingProviders.shopId, shippingProviders.deliveryOptionId, shippingProviders.id],
           set: {
             name: prov.name!,
             raw: prov,
-            syncedAt: new Date(),
+            syncedAt: deps.now(),
           },
         });
       }

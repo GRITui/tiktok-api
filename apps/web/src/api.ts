@@ -7,6 +7,13 @@ export class ApiErrorClass extends Error {
   }
 }
 
+/** Indirection so tests can observe redirects (jsdom cannot navigate). */
+export const nav = {
+  toLogin: () => {
+    window.location.href = '/login';
+  },
+};
+
 export async function apiFetch<T>(
   path: string,
   options?: RequestInit
@@ -21,14 +28,18 @@ export async function apiFetch<T>(
   });
 
   if (!response.ok) {
+    const errorData = (await response.json().catch(() => null)) as ApiError | null;
     if (response.status === 401) {
-      if (typeof window !== 'undefined') {
-        window.location.href = '/login';
+      // Session expired: send the user to the login page. Skip the session probe and the login call
+      // itself (and the login page), otherwise /login reloads forever and bad-password errors are lost.
+      const isAuthCall = path.startsWith('/v1/me') || path.startsWith('/v1/auth/');
+      if (typeof window !== 'undefined' && !isAuthCall && window.location.pathname !== '/login') {
+        nav.toLogin();
       }
-      throw new ApiErrorClass('UNAUTHORIZED', 'Unauthorized');
+      throw new ApiErrorClass(errorData?.error.code ?? 'unauthenticated', errorData?.error.message ?? 'Unauthorized');
     }
+    if (!errorData) throw new ApiErrorClass('http_' + response.status, response.statusText || 'Request failed');
 
-    const errorData = (await response.json()) as ApiError;
     throw new ApiErrorClass(
       errorData.error.code,
       errorData.error.message,

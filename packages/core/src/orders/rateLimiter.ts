@@ -1,3 +1,5 @@
+import { Redis } from "ioredis";
+
 /**
  * Rate limiting implementations (#25).
  * In-memory for tests, Redis token bucket for production.
@@ -52,86 +54,67 @@ export class InMemoryRateLimiter implements RateLimiter {
  * Redis-backed token bucket rate limiter using Lua scripts.
  * Ensures coordinated rate limiting across workers.
  */
-export function createRedisRateLimiter(opts: {
-  redisUrl: string;
-  ratePerSecond: number;
-  burst: number;
-}): RateLimiter {
+export function createRedisRateLimiter(opts: RedisRateLimiterOptions): RedisRateLimiter {
   return new RedisRateLimiter(opts);
 }
 
-class RedisRateLimiter implements RateLimiter {
-  private redis: any;
-  private readonly ratePerSecond: number;
-  private readonly burst: number;
-  private readonly keyPrefix: string;
+export interface RedisRateLimiterOptions {
+  redisUrl: string;
+  ratePerSecond: number;
+  burst: number;
+  keyPrefix?: string;
+  /** Give up after waiting this long in total (default 60s). */
+  maxWaitMs?: number;
+}
 
-  constructor(opts: {
-    redisUrl: string;
-    ratePerSecond: number;
-    burst: number;
-  }) {
-    this.ratePerSecond = opts.ratePerSecond;
-    this.burst = opts.burst;
-    this.keyPrefix = "rate:";
-    // Dynamic import will be done in acquire() to avoid load-time issues
+/**
+ * Atomic token bucket shared by all processes. Returns 0 when a token was taken,
+ * otherwise the milliseconds to wait before the next token is available.
+ */
+const TOKEN_BUCKET_LUA = `
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local rate = tonumber(ARGV[2])
+local burst = tonumber(ARGV[3])
+local state = redis.call('HMGET', key, 'tokens', 'ts')
+local tokens = tonumber(state[1]) or burst
+local ts = tonumber(state[2]) or now
+tokens = math.min(burst, tokens + math.max(0, now - ts) / 1000 * rate)
+local wait = 0
+if tokens >= 1 then
+  tokens = tokens - 1
+else
+  wait = math.ceil((1 - tokens) / rate * 1000)
+end
+redis.call('HSET', key, 'tokens', tokens, 'ts', now)
+redis.call('PEXPIRE', key, math.ceil(burst / rate * 1000) + 60000)
+return wait
+`;
+
+export class RedisRateLimiter implements RateLimiter {
+  private readonly redis: Redis;
+  private readonly keyPrefix: string;
+  private readonly maxWaitMs: number;
+
+  constructor(private readonly opts: RedisRateLimiterOptions) {
+    this.redis = new Redis(opts.redisUrl, { lazyConnect: true, maxRetriesPerRequest: 3 });
+    this.keyPrefix = opts.keyPrefix ?? "oms:rate:";
+    this.maxWaitMs = opts.maxWaitMs ?? 60_000;
   }
 
   async acquire(key: string): Promise<void> {
-    if (!this.redis) {
-      // Lazy load ioredis
-      const RedisModule = await import("ioredis");
-      const Redis = RedisModule.default || RedisModule;
-      this.redis = new (Redis as any)(process.env.REDIS_URL || "redis://localhost:6379");
-    }
-
-    const bucketKey = `${this.keyPrefix}${key}`;
-    const now = Date.now();
-
-    const luaScript = `
-      local key = KEYS[1]
-      local now = tonumber(ARGV[1])
-      local rate = tonumber(ARGV[2])
-      local burst = tonumber(ARGV[3])
-
-      local bucket = redis.call('HGETALL', key)
-      local tokens = tonumber(bucket[2] or burst)
-      local last_refill = tonumber(bucket[4] or now)
-
-      local elapsed = (now - last_refill) / 1000
-      tokens = math.min(burst, tokens + elapsed * rate)
-
-      if tokens >= 1 then
-        tokens = tokens - 1
-        redis.call('HSET', key, 'tokens', tokens, 'last_refill', now)
-        redis.call('EXPIRE', key, 3600)
-        return 1
-      else
-        local wait_ms = (1 - tokens) / rate * 1000
-        return wait_ms
-      end
-    `;
-
-    let attempts = 0;
-    while (attempts < 100) {
-      const result = await this.redis.eval(
-        luaScript,
-        1,
-        bucketKey,
-        now,
-        this.ratePerSecond,
-        this.burst,
+    const started = Date.now();
+    for (;;) {
+      const wait = Number(
+        await this.redis.eval(TOKEN_BUCKET_LUA, 1, this.keyPrefix + key, Date.now(), this.opts.ratePerSecond, this.opts.burst),
       );
-
-      if (result === 1) {
-        return;
-      }
-
-      const waitMs = Math.max(1, Math.ceil(result as number));
-      await new Promise((r) => setTimeout(r, waitMs));
-      attempts++;
+      if (wait <= 0) return;
+      if (Date.now() - started + wait > this.maxWaitMs) throw new Error(`Rate limiter wait for ${key} exceeded ${this.maxWaitMs}ms`);
+      await new Promise((r) => setTimeout(r, wait));
     }
+  }
 
-    throw new Error(`Rate limiter ${key} timeout after 100 attempts`);
+  async close(): Promise<void> {
+    this.redis.disconnect();
   }
 }

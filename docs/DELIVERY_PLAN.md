@@ -45,3 +45,33 @@ all `package.json` files except `apps/web/package.json`, and `pnpm-lock.yaml`.
 
 Merge lanes in order D → C → F1 → F2 → E1 → E2, regenerate the lockfile, wire the Redis rate limiter into
 `runtime.ts`, then run typecheck, tests, migrations against real Postgres, and a smoke test of API + worker.
+
+## Integration result
+
+All six lanes merged. 232 tests pass (`REDIS_URL` set), typecheck and build are green.
+
+End-to-end smoke test (built API + worker, real Postgres 16 + Redis 7, mock TikTok server that verifies request
+signatures): admin login → connect shop (state reuse rejected, tokens stored encrypted) → shops, warehouses and
+webhook subscriptions synced → backfill imports the order → shipping queue → pickup slot → ship (Idempotency-Key
+replay returns the stored result, re-ship blocked) → label job → **airwaybill PDF downloaded** → signed webhook stored
+and processed, duplicate ignored. The web app was exercised in Chromium (login, orders, shops, workbench).
+
+Bugs found and fixed during integration:
+
+- Fulfillment queue: `!=` excluded orders with no fulfillment type, so the queue was empty; cursor compared in the
+  wrong direction; bucket counts were dropped when filtering by SLA; per-order join miscounted combined packages.
+  Rewritten as one grouped query. Raw timestamps are now passed as ISO strings (postgres-js rejects `Date` there).
+- Job download only looked for CSV exports, so label PDFs could not be downloaded.
+- Ship replay returned `replayed: false`.
+- Redis rate limiter ignored its URL, read the clock once (never refilled) and confused a 1 ms wait with success.
+- Web app: `/login` reloaded forever (401 redirect on the session probe), a wrong password reloaded the page, and
+  login returned to `/login` because the session was not re-read.
+- Logistics routes awaited the Fastify reply (request hung); inactive shops returned 404 instead of 409.
+
+Open follow-ups:
+
+- **#9, #10** (human): register the app and verify signing, endpoint paths and webhook type numbers against the
+  real docs and sandbox. Every TikTok path is still marked `VERIFY`.
+- **#29**: the Shops page does not show the warehouse settings section yet (the API supports it).
+- Tests run on PGlite; the queue bug above only showed on real Postgres. Consider running core tests against the
+  CI Postgres service too.
