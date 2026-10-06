@@ -1,4 +1,5 @@
 import type { Deps } from "@oms/core";
+import { ingestWebhook } from "@oms/core";
 import { verifyWebhookSignature, type WebhookEnvelope } from "@oms/tiktok-sdk";
 import type { FastifyInstance } from "fastify";
 
@@ -21,7 +22,7 @@ export async function webhookRoutes(app: FastifyInstance, opts: { deps: Deps }) 
 
     const event = JSON.parse(rawBody) as WebhookEnvelope;
     req.log.info({ type: event.type, shopId: event.shop_id, id: event.tts_notification_id }, "webhook received");
-    // TODO(LANE D): await ingestWebhook(opts.deps, event)
-    return reply.code(200).send({ ok: true });
+    const result = await ingestWebhook(opts.deps, event);
+    return reply.code(200).send({ ok: true, duplicate: result.duplicate });
   });
 }
