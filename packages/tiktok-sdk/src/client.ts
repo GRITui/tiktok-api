@@ -2,6 +2,10 @@ import { TikTokApiError } from "./errors.js";
 import { signRequest } from "./signing.js";
 import type { ApiEnvelope } from "./types.js";
 
+export interface RateLimiter {
+  acquire(key: string): Promise<void>;
+}
+
 export interface TikTokClientOptions {
   appKey: string;
   appSecret: string;
@@ -11,6 +15,8 @@ export interface TikTokClientOptions {
   fetch?: typeof fetch;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  /** Optional rate limiter for per-shop/per-endpoint throttling. */
+  rateLimiter?: RateLimiter;
 }
 
 export interface RequestOptions {
@@ -31,6 +37,7 @@ export class TikTokClient {
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly rateLimiter?: RateLimiter;
 
   constructor(private readonly opts: TikTokClientOptions) {
     this.baseUrl = opts.baseUrl ?? DEFAULT_BASE_URL;
@@ -38,6 +45,7 @@ export class TikTokClient {
     this.fetchImpl = opts.fetch ?? fetch;
     this.now = opts.now ?? Date.now;
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+    this.rateLimiter = opts.rateLimiter;
   }
 
   get appKey(): string {
@@ -53,13 +61,31 @@ export class TikTokClient {
         lastError = err;
         const retryable = !(err instanceof TikTokApiError) || err.isRetryable;
         if (!retryable || attempt === this.maxAttempts) throw err;
-        await this.sleep(Math.min(250 * 2 ** (attempt - 1), 4000) + Math.random() * 100);
+
+        const waitMs = this.computeBackoff(err, attempt);
+        await this.sleep(waitMs);
       }
     }
     throw lastError;
   }
 
+  private computeBackoff(err: unknown, attempt: number): number {
+    if (err instanceof TikTokApiError && err.httpStatus === 429) {
+      const retryAfter = (err as any).retryAfterSeconds;
+      if (retryAfter) {
+        return retryAfter * 1000;
+      }
+    }
+    return Math.min(250 * 2 ** (attempt - 1), 4000) + Math.random() * 100;
+  }
+
   private async send<T>(req: RequestOptions): Promise<T> {
+    if (this.rateLimiter) {
+      const pathGroup = req.path.split("/")[1] || "api";
+      const key = `${req.shopCipher ?? "app"}:${pathGroup}`;
+      await this.rateLimiter.acquire(key);
+    }
+
     const contentType = "application/json";
     const rawBody = req.body === undefined ? undefined : JSON.stringify(req.body);
     const query: Record<string, string | number | undefined> = {
@@ -92,8 +118,14 @@ export class TikTokClient {
     } catch {
       throw new TikTokApiError(`Non-JSON response: ${text.slice(0, 200)}`, -1, undefined, res.status, req.path);
     }
+
     if (!res.ok || envelope.code !== 0) {
-      throw new TikTokApiError(envelope.message, envelope.code, envelope.request_id, res.status, req.path);
+      const error = new TikTokApiError(envelope.message, envelope.code, envelope.request_id, res.status, req.path);
+      const retryAfter = res.headers.get("retry-after");
+      if (retryAfter) {
+        (error as any).retryAfterSeconds = Number(retryAfter);
+      }
+      throw error;
     }
     return envelope.data as T;
   }
