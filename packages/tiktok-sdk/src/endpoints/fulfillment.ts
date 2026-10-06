@@ -12,6 +12,11 @@ const V = API_VERSIONS.fulfillment;
 
 export type HandoverMethod = "PICKUP" | "DROP_OFF";
 
+/** Normalize the avaliable/available typo from the API response. */
+export function slotAvailable(slot: TimeSlot & { avaliable?: boolean; available?: boolean }): boolean {
+  return slot.available ?? slot.avaliable ?? false;
+}
+
 export interface TimeSlot {
   start_time: number;
   end_time: number;
