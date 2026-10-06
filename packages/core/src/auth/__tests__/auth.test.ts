@@ -360,7 +360,7 @@ describe("auth", () => {
       }
     });
 
-    it("throws shop_not_found if shop is inactive", async () => {
+    it("throws shop_revoked if shop is inactive", async () => {
       const now = test.deps.now();
       const authId = "auth1";
 
@@ -390,7 +390,7 @@ describe("auth", () => {
         expect.fail("Expected OmsError to be thrown");
       } catch (err) {
         expect(err).toBeInstanceOf(Error);
-        expect((err as any).code).toBe("shop_not_found");
+        expect((err as any).code).toBe("shop_revoked");
       }
     });
 

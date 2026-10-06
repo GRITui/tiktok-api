@@ -35,7 +35,7 @@ export async function logisticsRoutes(app: FastifyInstance, opts: { deps: Deps }
       const epochMinute = Math.floor(deps.now().getTime() / 60000);
       const jobId = `logistics-${shopId}-manual-${epochMinute}`;
       await deps.queues.enqueue(Queues.logisticsSync, { shopId }, { jobId });
-      await reply.code(202);
+      reply.code(202);
       return { ok: true };
     },
   );
@@ -89,7 +89,7 @@ export async function logisticsRoutes(app: FastifyInstance, opts: { deps: Deps }
         slot: input.slot,
       });
 
-      await reply.code(204);
+      reply.code(204);
     },
   );
 }

@@ -15,6 +15,7 @@
     "fastify": "^5.6.0",
     "zod": "^4.0.0",
     "@oms/core": "workspace:*",
-    "@fastify/cookie": "^11.0.0"
+    "@fastify/cookie": "^11.0.0",
+    "drizzle-orm": "^0.45.0"
   }
 }

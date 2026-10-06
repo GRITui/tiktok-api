@@ -2,12 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import { buildApp } from "../../../app.js";
 import { createTestDeps, ttsOk } from "@oms/core/testing";
 
-vi.mock("../../auth/index.js", () => ({
-  getShopContext: vi.fn(async (_d, shopId) => ({ shopId, region: "US", accessToken: "t", shopCipher: "c" })),
+// Stub lane C's token handling; the path must resolve to the module core/logistics imports.
+vi.mock("../../../../../../packages/core/src/auth/index.js", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getShopContext: vi.fn(async (_d: unknown, shopId: string) => ({ shopId, region: "US", accessToken: "t", shopCipher: "c" })),
 }));
-vi.mock("../../orders/index.js");
-vi.mock("../../oms/index.js");
-vi.mock("../../fulfillment/index.js");
 
 // Helper to seed initial data
 async function seedShop(testDeps: any, shopId: string) {

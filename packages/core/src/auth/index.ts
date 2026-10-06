@@ -211,7 +211,7 @@ export async function getShopContext(deps: Deps, shopId: string): Promise<Resolv
   }
 
   if (!shop.active) {
-    throw new OmsError("shop_not_found", "Shop is inactive", 404);
+    throw new OmsError("shop_revoked", "Shop is no longer authorized", 409);
   }
 
   // 2. Get authorization

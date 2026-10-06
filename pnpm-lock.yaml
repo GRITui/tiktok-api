@@ -35,6 +35,9 @@ importers:
       '@oms/tiktok-sdk':
         specifier: workspace:*
         version: link:../../packages/tiktok-sdk
+      drizzle-orm:
+        specifier: ^0.45.0
+        version: 0.45.3(@electric-sql/pglite@0.3.16)(postgres@3.4.9)
       fastify:
         specifier: ^5.6.0
         version: 5.12.5
