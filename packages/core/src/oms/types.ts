@@ -20,7 +20,10 @@ export interface Page<T> {
 export interface ShopSummary {
   id: string;
   name: string;
+  /** Shop market, e.g. "US", "TH", "GB". */
   region: string;
+  /** Authorization entry the seller used; pass it to /auth/tiktok/connect?region= when reconnecting. */
+  authRegion: "US" | "ROW";
   active: boolean;
   authorizationId: string;
   /** "active" | "expiring" (refresh token < 7 days) | "revoked" */

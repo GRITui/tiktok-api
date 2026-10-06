@@ -4,83 +4,117 @@ import { apiGet, apiPost, apiPatch } from '../api';
 import { formatDate } from '../utils';
 import type { ShopSummary, WarehouseView } from '@oms/core/types';
 
-interface WarehouseModalProps {
-  warehouse: WarehouseView;
-  shopId: string;
-  userRole: string;
-  onClose: () => void;
-  onSave: () => void;
-}
+type HandoverMethod = 'PICKUP' | 'DROP_OFF';
 
-function WarehouseModal({ warehouse, shopId, userRole, onClose, onSave }: WarehouseModalProps) {
-  const [defaultHandover, setDefaultHandover] = useState(warehouse.defaultHandoverMethod || '');
-  const [loading, setLoading] = useState(false);
+/** Warehouses of one shop: default warehouse, default handover method, delivery options and carriers (#29). */
+export function WarehousesPanel({ shopId, userRole }: { shopId: string; userRole: string }) {
+  const [warehouses, setWarehouses] = useState<WarehouseView[] | null>(null);
   const [error, setError] = useState('');
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [openOptions, setOpenOptions] = useState<Record<string, boolean>>({});
+  const isAdmin = userRole === 'admin';
 
-  const handleSave = async () => {
-    setLoading(true);
+  const load = async () => {
     setError('');
     try {
-      await apiPatch(`/v1/shops/${shopId}/warehouses/${warehouse.id}`, {
-        defaultHandoverMethod: defaultHandover || null,
-      });
-      onSave();
-      onClose();
+      setWarehouses(await apiGet<WarehouseView[]>(`/v1/shops/${shopId}/warehouses`));
+    } catch (err: any) {
+      setError(err.message || 'Failed to load warehouses');
+    }
+  };
+
+  useEffect(() => {
+    load();
+  }, [shopId]);
+
+  const save = async (warehouseId: string, body: { isDefault?: boolean; defaultHandoverMethod?: HandoverMethod | null }) => {
+    setSavingId(warehouseId);
+    setError('');
+    try {
+      await apiPatch(`/v1/shops/${shopId}/warehouses/${warehouseId}`, body);
+      await load();
     } catch (err: any) {
       setError(err.message || 'Failed to save warehouse');
     } finally {
-      setLoading(false);
+      setSavingId(null);
     }
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-title">{warehouse.name}</div>
-        {error && <div className="error-message">{error}</div>}
-
-        <div style={{ fontSize: '13px', lineHeight: '1.8', marginBottom: '16px' }}>
-          <div><strong>Shop ID:</strong> {warehouse.shopId}</div>
-          <div><strong>Default:</strong> {warehouse.isDefault ? 'Yes' : 'No'}</div>
+    <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid var(--border-color)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h4 style={{ margin: 0 }}>Warehouses</h4>
+        <button className="secondary" onClick={load}>Refresh</button>
+      </div>
+      {error && <div className="error-message" role="alert">{error}</div>}
+      {warehouses === null ? (
+        <div className="spinner" style={{ margin: '12px auto' }}></div>
+      ) : warehouses.length === 0 ? (
+        <div className="empty-state">
+          <p>No warehouses yet. Use “Sync Logistics”, then Refresh.</p>
         </div>
-
-        {userRole === 'admin' && (
-          <div className="form-group">
-            <label htmlFor="handover">Default Handover Method</label>
-            <select
-              id="handover"
-              value={defaultHandover}
-              onChange={(e) => setDefaultHandover(e.target.value)}
-              disabled={loading}
+      ) : (
+        warehouses.map((wh) => {
+          const busy = savingId === wh.id;
+          return (
+            <div
+              key={wh.id}
+              data-testid={`warehouse-${wh.id}`}
+              style={{ padding: '12px', marginTop: '8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}
             >
-              <option value="">Not Set</option>
-              <option value="PICKUP">Pickup</option>
-              <option value="DROP_OFF">Drop Off</option>
-            </select>
-          </div>
-        )}
-
-        <div className="drawer-section">
-          <div className="drawer-section-title">Delivery Options</div>
-          {warehouse.deliveryOptions.length === 0 ? (
-            <div className="empty-state"><p>No delivery options</p></div>
-          ) : (
-            warehouse.deliveryOptions.map((opt) => (
-              <div key={opt.id} style={{ marginBottom: '12px', paddingBottom: '12px', borderBottom: '1px solid var(--border-color)' }}>
-                <div style={{ fontWeight: '500' }}>{opt.name}</div>
-                <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                  Providers: {opt.providers.map((p) => p.name).join(', ')}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                <div>
+                  <strong>{wh.name}</strong> {wh.isDefault && <span className="badge">Default</span>}
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>ID {wh.id}</div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <label htmlFor={`handover-${wh.id}`} style={{ fontSize: '13px', margin: 0 }}>Default handover</label>
+                  {isAdmin ? (
+                    <select
+                      id={`handover-${wh.id}`}
+                      value={wh.defaultHandoverMethod ?? ''}
+                      disabled={busy}
+                      onChange={(e) => save(wh.id, { defaultHandoverMethod: (e.target.value || null) as HandoverMethod | null })}
+                    >
+                      <option value="">Not set</option>
+                      <option value="PICKUP">Pickup</option>
+                      <option value="DROP_OFF">Drop-off</option>
+                    </select>
+                  ) : (
+                    <span id={`handover-${wh.id}`}>{wh.defaultHandoverMethod === 'DROP_OFF' ? 'Drop-off' : wh.defaultHandoverMethod === 'PICKUP' ? 'Pickup' : 'Not set'}</span>
+                  )}
+                  {isAdmin && !wh.isDefault && (
+                    <button className="secondary" disabled={busy} onClick={() => save(wh.id, { isDefault: true })}>
+                      Make default
+                    </button>
+                  )}
                 </div>
               </div>
-            ))
-          )}
-        </div>
-
-        <div className="button-group" style={{ marginTop: '20px' }}>
-          {userRole === 'admin' && <button onClick={handleSave} disabled={loading}>Save</button>}
-          <button onClick={onClose} className="secondary">Close</button>
-        </div>
-      </div>
+              <button
+                className="link-button"
+                style={{ marginTop: '8px', background: 'none', border: 'none', padding: 0, color: 'var(--badge-text)', cursor: 'pointer' }}
+                aria-expanded={!!openOptions[wh.id]}
+                onClick={() => setOpenOptions((o) => ({ ...o, [wh.id]: !o[wh.id] }))}
+              >
+                {wh.deliveryOptions.length} delivery option{wh.deliveryOptions.length === 1 ? '' : 's'}
+              </button>
+              {openOptions[wh.id] && (
+                <ul style={{ margin: '8px 0 0', paddingLeft: '18px', fontSize: '13px' }}>
+                  {wh.deliveryOptions.map((opt) => (
+                    <li key={opt.id}>
+                      {opt.name}
+                      <span style={{ color: 'var(--text-secondary)' }}>
+                        {' — '}
+                        {opt.providers.length ? opt.providers.map((p) => p.name).join(', ') : 'no carriers'}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          );
+        })
+      )}
     </div>
   );
 }
@@ -91,8 +125,6 @@ export function ShopsPage({ userRole }: { userRole: string }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [banner, setBanner] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-  const [warehouses, setWarehouses] = useState<Record<string, WarehouseView[]>>({});
-  const [selectedWarehouse, setSelectedWarehouse] = useState<WarehouseView | null>(null);
   const [expandedShop, setExpandedShop] = useState<string | null>(null);
 
   const connected = useMemo(() => searchParams.get('connected') === '1', [searchParams]);
@@ -122,15 +154,6 @@ export function ShopsPage({ userRole }: { userRole: string }) {
     }
   };
 
-  const fetchWarehouses = async (shopId: string) => {
-    try {
-      const data = await apiGet<WarehouseView[]>(`/v1/shops/${shopId}/warehouses`);
-      setWarehouses((prev) => ({ ...prev, [shopId]: data }));
-    } catch (err: any) {
-      setError(err.message || 'Failed to load warehouses');
-    }
-  };
-
   const handleResync = async (shopId: string) => {
     try {
       await apiPost(`/v1/shops/${shopId}/resync`, {});
@@ -150,16 +173,7 @@ export function ShopsPage({ userRole }: { userRole: string }) {
     }
   };
 
-  const toggleShop = async (shopId: string) => {
-    if (expandedShop === shopId) {
-      setExpandedShop(null);
-    } else {
-      setExpandedShop(shopId);
-      if (!warehouses[shopId]) {
-        await fetchWarehouses(shopId);
-      }
-    }
-  };
+  const toggleShop = (shopId: string) => setExpandedShop((cur) => (cur === shopId ? null : shopId));
 
   useEffect(() => {
     fetchShops();
@@ -201,7 +215,7 @@ export function ShopsPage({ userRole }: { userRole: string }) {
       ) : (
         shops.map((shop) => (
           <div key={shop.id} className="card" style={{ marginBottom: '12px' }}>
-            <div onClick={() => toggleShop(shop.id)} style={{ cursor: 'pointer' }}>
+            <div>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
                   <h3 style={{ marginBottom: '8px' }}>{shop.name}</h3>
@@ -214,71 +228,36 @@ export function ShopsPage({ userRole }: { userRole: string }) {
                 </div>
                 <div style={{ textAlign: 'right' }}>
                   {shop.authStatus === 'revoked' && userRole === 'admin' && (
-                    <a href={`/auth/tiktok/connect?region=${shop.region}`} style={{ marginBottom: '8px', display: 'block' }}>
+                    <a href={`/auth/tiktok/connect?region=${shop.authRegion}`} style={{ marginBottom: '8px', display: 'block' }}>
                       <button>Reconnect</button>
                     </a>
                   )}
                   {userRole !== 'viewer' && (
                     <>
-                      <button onClick={(e) => { e.stopPropagation(); handleResync(shop.id); }} style={{ marginBottom: '8px', display: 'block' }} className="secondary">
+                      <button onClick={() => handleResync(shop.id)} style={{ marginBottom: '8px', display: 'block' }} className="secondary">
                         Resync
                       </button>
-                      <button onClick={(e) => { e.stopPropagation(); handleSyncLogistics(shop.id); }} className="secondary">
+                      <button onClick={() => handleSyncLogistics(shop.id)} style={{ marginBottom: '8px', display: 'block' }} className="secondary">
                         Sync Logistics
                       </button>
                     </>
                   )}
+                  <button
+                    className="secondary"
+                    aria-expanded={expandedShop === shop.id}
+                    onClick={() => toggleShop(shop.id)}
+                  >
+                    {expandedShop === shop.id ? 'Hide warehouses' : 'Warehouses'}
+                  </button>
                 </div>
               </div>
             </div>
 
-            {expandedShop === shop.id && (
-              <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid var(--border-color)' }}>
-                <h4>Warehouses</h4>
-                {warehouses[shop.id] && warehouses[shop.id]!.length > 0 ? (
-                  warehouses[shop.id]!.map((warehouse) => (
-                    <div
-                      key={warehouse.id}
-                      style={{
-                        padding: '12px',
-                        marginTop: '8px',
-                        backgroundColor: 'var(--bg-primary)',
-                        borderRadius: '4px',
-                        border: '1px solid var(--border-color)',
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                      }}
-                    >
-                      <div>
-                        <div><strong>{warehouse.name}</strong> {warehouse.isDefault && <span className="badge">Default</span>}</div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                          Handover: {warehouse.defaultHandoverMethod || 'Not set'}
-                        </div>
-                      </div>
-                      <button onClick={() => setSelectedWarehouse(warehouse)} className="secondary">
-                        View
-                      </button>
-                    </div>
-                  ))
-                ) : (
-                  <div className="empty-state"><p>No warehouses</p></div>
-                )}
-              </div>
-            )}
+            {expandedShop === shop.id && <WarehousesPanel shopId={shop.id} userRole={userRole} />}
           </div>
         ))
       )}
 
-      {selectedWarehouse && (
-        <WarehouseModal
-          warehouse={selectedWarehouse}
-          shopId={selectedWarehouse.shopId}
-          userRole={userRole}
-          onClose={() => setSelectedWarehouse(null)}
-          onSave={fetchShops}
-        />
-      )}
     </div>
   );
 }

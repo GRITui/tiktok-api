@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 
-import { apiPost } from '../api';
+import { apiPost, nav } from '../api';
 import type { SessionUser } from '@oms/core/types';
 
 export function LoginPage() {
@@ -22,7 +22,7 @@ export function LoginPage() {
       setEmail('');
       setPassword('');
       // Full navigation so the app shell re-reads the session (GET /v1/me) with the new cookie.
-      window.location.assign('/orders');
+      nav.go('/orders');
     } catch (err: any) {
       setError(err.message || 'Login failed');
     } finally {

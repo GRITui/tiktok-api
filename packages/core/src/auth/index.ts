@@ -419,11 +419,13 @@ export async function listShops(deps: Deps): Promise<ShopSummary[]> {
       const progress = (shop.backfillCursor - shop.backfillFrom) / (now.getTime() / 1000 - shop.backfillFrom);
       backfillProgress = Math.max(0, Math.min(1, progress)); // Clamp to 0..1
     }
+    if (shop.backfillStatus === "done") backfillProgress = 1;
 
     results.push({
       id: shop.id,
       name: shop.name,
       region: shop.region,
+      authRegion: auth.region === "US" ? "US" : "ROW",
       active: shop.active,
       authorizationId: shop.authorizationId,
       authStatus,

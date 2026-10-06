@@ -12,6 +12,10 @@ export const nav = {
   toLogin: () => {
     window.location.href = '/login';
   },
+  /** Full page load (re-runs the app shell's session check). */
+  go: (path: string) => {
+    window.location.assign(path);
+  },
 };
 
 export async function apiFetch<T>(
