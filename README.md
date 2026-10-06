@@ -22,6 +22,10 @@ packages/
 
 ## Getting started
 
+**On a Mac:** `scripts/mac-dev.sh --create-admin you@example.com` does everything below plus a public tunnel for TikTok. See [`docs/RUN_ON_MAC.md`](docs/RUN_ON_MAC.md).
+
+Manual steps:
+
 ```bash
 cp .env.example .env            # fill TTS_APP_KEY / TTS_APP_SECRET / TTS_SERVICE_ID
 docker compose up -d            # postgres + redis

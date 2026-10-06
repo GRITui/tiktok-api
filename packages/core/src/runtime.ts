@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { createDb } from "@oms/db";
 import { AuthApi, TikTokClient } from "@oms/tiktok-sdk";
 import { Queue } from "bullmq";
@@ -46,7 +48,8 @@ export function createDepsFromEnv(env: NodeJS.ProcessEnv = process.env) {
     serviceId: env.TTS_SERVICE_ID ?? "",
     backfillDays: Number(env.BACKFILL_DAYS ?? 90),
     pollOverlapMinutes: Number(env.POLL_OVERLAP_MINUTES ?? 10),
-    fileStorageDir: env.FILE_STORAGE_DIR ?? "./var/files",
+    // API and worker run from different package dirs; anchor relative paths at the repo root so both agree.
+    fileStorageDir: resolveFromRepoRoot(env.FILE_STORAGE_DIR ?? "./var/files"),
   };
   const { db, close: closeDb } = createDb(env.DATABASE_URL ?? "postgres://oms:oms@localhost:5432/oms");
   const redisUrl = env.REDIS_URL ?? "redis://localhost:6379";
@@ -72,4 +75,19 @@ export function createDepsFromEnv(env: NodeJS.ProcessEnv = process.env) {
     now: () => new Date(),
   };
   return { deps, close: async () => { await queues.close(); await rateLimiter.close(); await closeDb(); } };
+}
+
+/** Directory containing pnpm-workspace.yaml above `from` (falls back to `from`). */
+export function findRepoRoot(from: string = process.cwd()): string {
+  let dir = resolve(from);
+  for (;;) {
+    if (existsSync(join(dir, "pnpm-workspace.yaml"))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) return resolve(from);
+    dir = parent;
+  }
+}
+
+export function resolveFromRepoRoot(p: string): string {
+  return isAbsolute(p) ? p : resolve(findRepoRoot(), p);
 }
