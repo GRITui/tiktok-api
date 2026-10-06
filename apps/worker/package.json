@@ -1,0 +1,17 @@
+{
+  "name": "@oms/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --conditions=@oms/source --env-file-if-exists=../../.env src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "echo 'no tests yet'"
+  },
+  "dependencies": {
+    "@oms/db": "workspace:*",
+    "@oms/tiktok-sdk": "workspace:*",
+    "bullmq": "^5.0.0"
+  }
+}
