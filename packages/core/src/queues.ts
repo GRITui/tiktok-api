@@ -14,6 +14,8 @@ export const Queues = {
   batchShip: "oms-batch-ship",
   labels: "oms-labels",
   orderExport: "oms-order-export",
+  /** Seller-shipping tracking CSV import. data: { jobId: string } */
+  trackingImport: "oms-tracking-import",
   /** Fans out per-shop orderSync/logisticsSync jobs on a schedule. data: { kind: "orders" | "logistics" } */
   scheduler: "oms-scheduler",
 } as const;

@@ -51,8 +51,9 @@ export async function apiFetch<T>(
     );
   }
 
-  const data = await response.json();
-  return data;
+  // 204 No Content (e.g. PUT /handover) and other empty bodies.
+  const text = await response.text();
+  return (text ? JSON.parse(text) : undefined) as T;
 }
 
 export async function apiGet<T>(path: string): Promise<T> {
@@ -67,10 +68,11 @@ export async function apiPost<T>(path: string, body?: unknown, options?: Request
   });
 }
 
-export async function apiPut<T>(path: string, body?: unknown): Promise<T> {
+export async function apiPut<T>(path: string, body?: unknown, options?: RequestInit): Promise<T> {
   return apiFetch<T>(path, {
     method: 'PUT',
     body: body ? JSON.stringify(body) : undefined,
+    ...options,
   });
 }
 

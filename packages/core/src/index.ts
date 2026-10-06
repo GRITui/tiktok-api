@@ -7,4 +7,5 @@ export * from "./orders/index.js";
 export * from "./oms/index.js";
 export * from "./logistics/index.js";
 export * from "./fulfillment/index.js";
+export * from "./fulfillment/sellerShipping.js";
 export * from "./runtime.js";

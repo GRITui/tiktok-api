@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { apiFetch, apiPost, apiGet, ApiErrorClass, nav } from './api';
+import { apiFetch, apiPost, apiGet, apiPut, ApiErrorClass, nav } from './api';
 
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
@@ -10,10 +10,7 @@ describe('API module', () => {
   });
 
   it('apiGet should fetch with GET method', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ data: 'test' }),
-    });
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ data: 'test' })));
 
     const result = await apiGet('/v1/orders');
     expect(result).toEqual({ data: 'test' });
@@ -24,10 +21,7 @@ describe('API module', () => {
   });
 
   it('apiPost should fetch with POST method', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ success: true }),
-    });
+    mockFetch.mockResolvedValueOnce(new Response(JSON.stringify({ success: true })));
 
     const result = await apiPost('/v1/auth/login', { email: 'test@example.com' });
     expect(result).toEqual({ success: true });
@@ -58,6 +52,19 @@ describe('API module', () => {
       expect((err as ApiErrorClass).code).toBe('INVALID_REQUEST');
       expect((err as ApiErrorClass).message).toBe('Invalid request');
     }
+  });
+});
+
+describe('empty responses', () => {
+  it('resolves 204 No Content to undefined (e.g. PUT /handover)', async () => {
+    mockFetch.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await expect(apiPut('/v1/packages/P1/handover', { method: 'DROP_OFF' })).resolves.toBeUndefined();
+  });
+
+  it('passes extra headers on PUT', async () => {
+    mockFetch.mockResolvedValueOnce(new Response('{}'));
+    await apiPut('/v1/packages/P1/tracking', {}, { headers: { 'Idempotency-Key': 'k-123456' } });
+    expect(mockFetch.mock.calls.at(-1)![1].headers).toMatchObject({ 'Idempotency-Key': 'k-123456', 'Content-Type': 'application/json' });
   });
 });
 

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiGet, apiPost } from '../api';
+import { SellerShipDialog } from '../components/SellerShipping';
 import { formatDate, formatCurrency, buildQueryString, getTimeRemaining, isOverdue } from '../utils';
 import type { OrderListItem, OrderDetail, Page } from '@oms/core/types';
 
@@ -13,6 +14,8 @@ function OrderDrawer({ orderId, onClose, userRole }: OrderDrawerProps) {
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [editTracking, setEditTracking] = useState<{ id: string; trackingNumber: string | null } | null>(null);
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
     const fetchOrder = async () => {
@@ -27,7 +30,7 @@ function OrderDrawer({ orderId, onClose, userRole }: OrderDrawerProps) {
     };
 
     fetchOrder();
-  }, [orderId]);
+  }, [orderId, reload]);
 
   if (loading) {
     return (
@@ -123,6 +126,15 @@ function OrderDrawer({ orderId, onClose, userRole }: OrderDrawerProps) {
                   {pkg.trackingNumber && <div>Tracking: {pkg.trackingNumber}</div>}
                   {pkg.shippingProvider && <div>Provider: {pkg.shippingProvider}</div>}
                 </div>
+                {pkg.shippingType === 'SELLER' && pkg.shippedAt && userRole !== 'viewer' && (
+                  <button
+                    className="secondary"
+                    style={{ marginTop: '6px' }}
+                    onClick={() => setEditTracking({ id: pkg.id, trackingNumber: pkg.trackingNumber })}
+                  >
+                    Edit tracking
+                  </button>
+                )}
                 {pkg.timeline.length > 0 && (
                   <div className="timeline" style={{ marginTop: '8px', fontSize: '12px' }}>
                     {pkg.timeline.map((event, idx) => (
@@ -138,6 +150,15 @@ function OrderDrawer({ orderId, onClose, userRole }: OrderDrawerProps) {
           )}
         </div>
       </div>
+      {editTracking && (
+        <SellerShipDialog
+          packageId={editTracking.id}
+          mode="edit"
+          currentTrackingNumber={editTracking.trackingNumber}
+          onClose={() => setEditTracking(null)}
+          onDone={() => setReload((n) => n + 1)}
+        />
+      )}
     </div>
   );
 }

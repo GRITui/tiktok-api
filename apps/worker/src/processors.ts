@@ -1,7 +1,7 @@
 import {
   type Deps, Queues, type QueueName,
   processWebhookEvent, runOrderSync, runBackfill, refreshExpiringTokens, syncLogistics,
-  runBatchShip, runLabelJob, runOrderExport,
+  runBatchShip, runLabelJob, runOrderExport, runTrackingImport,
 } from "@oms/core";
 import { shops } from "@oms/db";
 import { eq } from "drizzle-orm";
@@ -33,6 +33,7 @@ export const processors: Record<QueueName, Processor> = {
   [Queues.batchShip]: (d, j) => runBatchShip(d, str(j.jobId, "jobId")),
   [Queues.labels]: (d, j) => runLabelJob(d, str(j.jobId, "jobId")),
   [Queues.orderExport]: (d, j) => runOrderExport(d, str(j.jobId, "jobId")),
+  [Queues.trackingImport]: (d, j) => runTrackingImport(d, str(j.jobId, "jobId")),
   [Queues.scheduler]: schedule,
 };
 

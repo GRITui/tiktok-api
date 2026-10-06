@@ -11,6 +11,7 @@ import { jobRoutes } from "./routes/v1/jobs.js";
 import { logisticsRoutes } from "./routes/v1/logistics.js";
 import { orderRoutes } from "./routes/v1/orders.js";
 import { queueRoutes } from "./routes/v1/queue.js";
+import { sellerShippingRoutes } from "./routes/v1/sellerShipping.js";
 import { shopRoutes } from "./routes/v1/shops.js";
 
 export interface AppOptions {
@@ -37,5 +38,6 @@ export async function buildApp({ deps, testUser, logger = true }: AppOptions) {
   await app.register(queueRoutes, { ...opts, prefix: "/v1" }); //       LANE E1
   await app.register(logisticsRoutes, { ...opts, prefix: "/v1" }); //   LANE F1
   await app.register(fulfillmentRoutes, { ...opts, prefix: "/v1" }); // LANE F2
+  await app.register(sellerShippingRoutes, { ...opts, prefix: "/v1" }); // Sprint 5 seller shipping
   return app;
 }

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiGet, apiPost, apiPut } from '../api';
+import { SellerShipDialog, TrackingImportDialog } from '../components/SellerShipping';
 import { formatDate, getTimeRemaining, isOverdue, buildQueryString } from '../utils';
 import type {
   FulfillmentQueueItem,
@@ -14,10 +15,12 @@ interface ShipDialogProps {
   packageId: string;
   onClose: () => void;
   onShipSuccess: () => void;
+  /** Offered after a successful ship: TikTok creates the label at ship time. */
+  onPrintLabel?: (packageId: string) => void;
   userRole: string;
 }
 
-function ShipDialog({ packageId, onClose, onShipSuccess, userRole }: ShipDialogProps) {
+function ShipDialog({ packageId, onClose, onShipSuccess, onPrintLabel, userRole }: ShipDialogProps) {
   const [options, setOptions] = useState<HandoverOptions | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -81,9 +84,8 @@ function ShipDialog({ packageId, onClose, onShipSuccess, userRole }: ShipDialogP
 
   if (loading) {
     return (
-      <div>
-        <div className="modal-overlay" onClick={onClose}></div>
-        <div className="modal">
+      <div className="modal-overlay" onClick={onClose}>
+        <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
           <div className="spinner" style={{ margin: '20px auto' }}></div>
         </div>
       </div>
@@ -92,9 +94,8 @@ function ShipDialog({ packageId, onClose, onShipSuccess, userRole }: ShipDialogP
 
   if (!options) {
     return (
-      <div>
-        <div className="modal-overlay" onClick={onClose}></div>
-        <div className="modal">
+      <div className="modal-overlay" onClick={onClose}>
+        <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
           <div className="error-message">Failed to load handover options</div>
           <button onClick={onClose} style={{ marginTop: '16px' }}>Close</button>
         </div>
@@ -104,9 +105,8 @@ function ShipDialog({ packageId, onClose, onShipSuccess, userRole }: ShipDialogP
 
   if (result) {
     return (
-      <div>
-        <div className="modal-overlay" onClick={onClose}></div>
-        <div className="modal">
+      <div className="modal-overlay" onClick={onClose}>
+        <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
           <div className="modal-title">Ship Result</div>
           <div className="success-message">Package shipped successfully!</div>
           <div style={{ fontSize: '13px', lineHeight: '1.8', marginBottom: '16px' }}>
@@ -114,16 +114,20 @@ function ShipDialog({ packageId, onClose, onShipSuccess, userRole }: ShipDialogP
             {result.trackingNumber && <div><strong>Tracking:</strong> {result.trackingNumber}</div>}
             <div><strong>Replayed:</strong> {result.replayed ? 'Yes (duplicate request)' : 'No'}</div>
           </div>
-          <button onClick={onClose} style={{ width: '100%' }}>Close</button>
+          {onPrintLabel && (
+            <button onClick={() => { onPrintLabel(packageId); onClose(); }} style={{ width: '100%', marginBottom: '8px' }}>
+              Print shipping label
+            </button>
+          )}
+          <button onClick={onClose} style={{ width: '100%' }} className={onPrintLabel ? 'secondary' : undefined}>Close</button>
         </div>
       </div>
     );
   }
 
   return (
-    <div>
-      <div className="modal-overlay" onClick={onClose}></div>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         <div className="modal-title">Ship Package {packageId}</div>
 
         {error && <div className="error-message">{error}</div>}
@@ -151,7 +155,9 @@ function ShipDialog({ packageId, onClose, onShipSuccess, userRole }: ShipDialogP
                     style={{ marginRight: '8px' }}
                   />
                   <span>
-                    {new Date(slot.start * 1000).toLocaleTimeString()} - {new Date(slot.end * 1000).toLocaleTimeString()}
+                    {new Date(slot.start * 1000).toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                    {' – '}
+                    {new Date(slot.end * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     {!slot.available && ' (Unavailable)'}
                   </span>
                 </label>
@@ -182,9 +188,25 @@ function ShipDialog({ packageId, onClose, onShipSuccess, userRole }: ShipDialogP
 interface JobProgressProps {
   jobId: string;
   onClose: () => void;
+  /** Re-run the same kind of job for the failed items. */
+  onRetry?: (failedIds: string[]) => void;
+  /** After a batch ship: print labels for the packages that shipped. */
+  onPrintShipped?: (shippedIds: string[], documentType: DocumentType) => void;
+  /** Called once when the job reaches a final state. */
+  onFinished?: () => void;
 }
 
-function JobProgress({ jobId, onClose }: JobProgressProps) {
+type DocumentType = 'SHIPPING_LABEL' | 'PACKING_SLIP' | 'SHIPPING_LABEL_AND_PACKING_SLIP';
+
+const JOB_NAMES: Record<string, string> = {
+  batch_ship: 'Bulk ship',
+  labels: 'Print labels',
+  tracking_import: 'Tracking import',
+  order_export: 'Order export',
+};
+
+export function JobProgress({ jobId, onClose, onRetry, onPrintShipped, onFinished }: JobProgressProps) {
+  const [docType, setDocType] = useState<DocumentType>('SHIPPING_LABEL');
   const [job, setJob] = useState<JobView | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -199,6 +221,7 @@ function JobProgress({ jobId, onClose }: JobProgressProps) {
 
         if (data.status === 'succeeded' || data.status === 'failed' || data.status === 'partial') {
           if (interval) clearInterval(interval);
+          onFinished?.();
         }
       } catch (err: any) {
         setError(err.message || 'Failed to load job');
@@ -215,24 +238,9 @@ function JobProgress({ jobId, onClose }: JobProgressProps) {
     };
   }, [jobId]);
 
-  const handleRetryFailed = async () => {
-    if (!job) return;
-    const failedIds = job.items
-      .filter((item) => item.status === 'failed')
-      .map((item) => item.targetId);
-
-    if (failedIds.length === 0) return;
-
-    try {
-      const result = await apiPost<{ jobId: string }>('/v1/fulfillment/batch-ship', {
-        packageIds: failedIds,
-      });
-      // Navigate or refresh
-      onClose();
-    } catch (err: any) {
-      setError(err.message || 'Retry failed');
-    }
-  };
+  const failedIds = job ? job.items.filter((i) => i.status === 'failed').map((i) => i.targetId) : [];
+  const succeededIds = job ? job.items.filter((i) => i.status === 'succeeded').map((i) => i.targetId) : [];
+  const finished = job ? ['succeeded', 'failed', 'partial'].includes(job.status) : false;
 
   if (loading) {
     return (
@@ -260,9 +268,9 @@ function JobProgress({ jobId, onClose }: JobProgressProps) {
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-title">Job Progress</div>
 
-        <div className="job-status">
+        <div className="job-status" style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+          <div><strong>Job:</strong> {JOB_NAMES[job.type] ?? job.type}</div>
           <div><strong>Status:</strong> {job.status}</div>
-          <div><strong>Type:</strong> {job.type}</div>
         </div>
 
         <div className="progress-container">
@@ -278,7 +286,7 @@ function JobProgress({ jobId, onClose }: JobProgressProps) {
         {job.downloadUrl && (
           <div style={{ marginBottom: '16px' }}>
             <a href={job.downloadUrl} download>
-              <button style={{ width: '100%' }}>Download {job.type === 'export_orders' ? 'CSV' : 'PDF'}</button>
+              <button style={{ width: '100%' }}>Download {job.type === 'order_export' ? 'CSV' : 'PDF'}</button>
             </a>
           </div>
         )}
@@ -295,13 +303,29 @@ function JobProgress({ jobId, onClose }: JobProgressProps) {
                   </div>
                 ))}
             </div>
-            <button onClick={handleRetryFailed} style={{ marginTop: '12px', width: '100%' }} className="secondary">
-              Retry Failed
-            </button>
+            {onRetry && finished && (
+              <button onClick={() => onRetry(failedIds)} style={{ marginTop: '12px', width: '100%' }} className="secondary">
+                Retry {failedIds.length} failed
+              </button>
+            )}
           </>
         )}
 
-        <button onClick={onClose} style={{ marginTop: '12px', width: '100%' }}>Close</button>
+        {onPrintShipped && finished && job.type === 'batch_ship' && succeededIds.length > 0 && (
+          <div style={{ marginTop: '12px', display: 'flex', gap: '8px' }}>
+            <label htmlFor="job-doc-type" className="visually-hidden">Document</label>
+            <select id="job-doc-type" value={docType} onChange={(e) => setDocType(e.target.value as DocumentType)}>
+              <option value="SHIPPING_LABEL">Shipping label</option>
+              <option value="PACKING_SLIP">Packing slip</option>
+              <option value="SHIPPING_LABEL_AND_PACKING_SLIP">Label + packing slip</option>
+            </select>
+            <button onClick={() => onPrintShipped(succeededIds, docType)} style={{ flex: 1 }}>
+              Print for {succeededIds.length} shipped
+            </button>
+          </div>
+        )}
+
+        <button onClick={onClose} style={{ marginTop: '12px', width: '100%' }} className="secondary">Close</button>
       </div>
     </div>
   );
@@ -314,8 +338,9 @@ export function FulfillmentPage({ userRole }: { userRole: string }) {
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState<'overdue' | 'lt24h' | 'later'>('overdue');
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [shipDialog, setShipDialog] = useState<string | null>(null);
-  const [jobId, setJobId] = useState<string | null>(null);
+  const [shipDialog, setShipDialog] = useState<FulfillmentQueueItem | null>(null);
+  const [job, setJob] = useState<{ id: string; kind: 'batch_ship' | 'labels' | 'tracking_import'; documentType?: DocumentType } | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
 
   // Filters
   const [shopId, setShopId] = useState('');
@@ -344,36 +369,33 @@ export function FulfillmentPage({ userRole }: { userRole: string }) {
     }
   };
 
-  const handleBatchShip = async () => {
-    const packageIds = Array.from(selected);
+  const startBatchShip = async (packageIds: string[]) => {
     if (packageIds.length === 0) return;
-
     try {
-      const result = await apiPost<{ jobId: string }>('/v1/fulfillment/batch-ship', {
-        packageIds,
-      });
-      setJobId(result.jobId);
+      const result = await apiPost<{ jobId: string }>('/v1/fulfillment/batch-ship', { packageIds });
+      setJob({ id: result.jobId, kind: 'batch_ship' });
       setSelected(new Set());
-      fetchQueue();
     } catch (err: any) {
       setError(err.message || 'Batch ship failed');
     }
   };
 
-  const handlePrintLabels = async (documentType: string) => {
-    const packageIds = Array.from(selected);
+  /** Labels exist only once a package is shipped, so printing starts from shipped packages. */
+  const startLabels = async (packageIds: string[], documentType: DocumentType = 'SHIPPING_LABEL') => {
     if (packageIds.length === 0) return;
-
     try {
-      const result = await apiPost<{ jobId: string }>('/v1/fulfillment/labels', {
-        packageIds,
-        documentType,
-      });
-      setJobId(result.jobId);
-      setSelected(new Set());
+      const result = await apiPost<{ jobId: string }>('/v1/fulfillment/labels', { packageIds, documentType });
+      setJob({ id: result.jobId, kind: 'labels', documentType });
     } catch (err: any) {
       setError(err.message || 'Print labels failed');
     }
+  };
+
+  const retryJob = (failedIds: string[]) => {
+    if (!job) return;
+    if (job.kind === 'batch_ship') startBatchShip(failedIds);
+    else if (job.kind === 'labels') startLabels(failedIds, job.documentType);
+    else setImportOpen(true); // tracking import: fix the rows and upload again
   };
 
   const toggleSelect = (packageId: string) => {
@@ -440,31 +462,16 @@ export function FulfillmentPage({ userRole }: { userRole: string }) {
         </div>
         <div className="button-group">
           <button onClick={fetchQueue}>Apply Filters</button>
+          {userRole !== 'viewer' && (
+            <button className="secondary" onClick={() => setImportOpen(true)}>Import tracking CSV</button>
+          )}
         </div>
       </div>
 
       {selected.size > 0 && userRole !== 'viewer' && (
         <div className="multi-select-actions">
           <div className="multi-select-count">{selected.size} selected</div>
-          <button onClick={handleBatchShip} className="secondary">Ship Selected</button>
-          <button
-            onClick={() => handlePrintLabels('SHIPPING_LABEL')}
-            className="secondary"
-          >
-            Print Shipping Label
-          </button>
-          <button
-            onClick={() => handlePrintLabels('PACKING_SLIP')}
-            className="secondary"
-          >
-            Print Packing Slip
-          </button>
-          <button
-            onClick={() => handlePrintLabels('SHIPPING_LABEL_AND_PACKING_SLIP')}
-            className="secondary"
-          >
-            Print Both
-          </button>
+          <button onClick={() => startBatchShip(Array.from(selected))} className="secondary">Ship Selected</button>
           <button onClick={() => setSelected(new Set())} className="secondary">Clear</button>
         </div>
       )}
@@ -531,7 +538,9 @@ export function FulfillmentPage({ userRole }: { userRole: string }) {
                 <td>{item.skus.join(', ')}</td>
                 <td>
                   {userRole !== 'viewer' && (
-                    <button onClick={() => setShipDialog(item.packageId)} className="secondary">Ship</button>
+                    <button onClick={() => setShipDialog(item)} className="secondary">
+                      {item.shippingType === 'SELLER' ? 'Add tracking' : 'Ship'}
+                    </button>
                   )}
                 </td>
               </tr>
@@ -540,16 +549,42 @@ export function FulfillmentPage({ userRole }: { userRole: string }) {
         </table>
       )}
 
-      {shipDialog && (
+      {shipDialog && shipDialog.shippingType === 'SELLER' && (
+        <SellerShipDialog
+          packageId={shipDialog.packageId}
+          mode="ship"
+          onClose={() => setShipDialog(null)}
+          onDone={() => fetchQueue()}
+        />
+      )}
+
+      {shipDialog && shipDialog.shippingType !== 'SELLER' && (
         <ShipDialog
-          packageId={shipDialog}
+          packageId={shipDialog.packageId}
           onClose={() => setShipDialog(null)}
           onShipSuccess={fetchQueue}
+          onPrintLabel={(id) => startLabels([id])}
           userRole={userRole}
         />
       )}
 
-      {jobId && <JobProgress jobId={jobId} onClose={() => setJobId(null)} />}
+      {importOpen && (
+        <TrackingImportDialog
+          onClose={() => setImportOpen(false)}
+          onStarted={(id) => { setImportOpen(false); setJob({ id, kind: 'tracking_import' }); }}
+        />
+      )}
+
+      {job && (
+        <JobProgress
+          key={job.id}
+          jobId={job.id}
+          onClose={() => setJob(null)}
+          onFinished={fetchQueue}
+          onRetry={retryJob}
+          onPrintShipped={(ids, documentType) => startLabels(ids, documentType)}
+        />
+      )}
     </div>
   );
 }
