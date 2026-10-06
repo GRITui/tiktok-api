@@ -3,16 +3,29 @@
 Two-week sprints. Each sprint is an **epic** issue labelled `epic` + `sprint-N`, and each story is a sub-issue
 with the same sprint label and an area label. GitHub issues are the source of truth. This file is the overview.
 
+### Labels
+
+| Label | Meaning |
+| --- | --- |
+| `epic` / `story` | Sprint epic or a story inside it (stories are sub-issues of their epic) |
+| `sprint-0` … `sprint-8` | Planned sprint |
+| `auth`, `orders`, `fulfillment`, `after-sales`, `catalog`, `finance` | Business area |
+| `sdk`, `db`, `api`, `ui`, `worker`, `webhooks`, `infra`, `security` | Layer / component |
+| `P0` / `P1` / `P2` | Must have for the sprint goal / should have / can slip *(fulfillment sprints)* |
+| `size:S` / `size:M` | ≤ 2 days / 3–4 days *(fulfillment sprints)* |
+| `ship:tiktok` / `ship:seller` / `ship:fbt` | Applies only to TikTok Shipping, seller (own carrier) shipping, or Fulfilled by TikTok |
+
 | Sprint | Goal | Stories |
 | --- | --- | --- |
 | [Sprint 0 — Foundation & API access](https://github.com/GRITui/tiktok-api/issues/1) | Repo, CI, Partner Center app and a verified signed call against sandbox. | 5 |
 | [Sprint 1 — Seller authorization & shops](https://github.com/GRITui/tiktok-api/issues/2) | A seller can connect one or more shops; tokens are stored and kept fresh. | 5 |
 | [Sprint 2 — Order ingestion](https://github.com/GRITui/tiktok-api/issues/3) | Every order from every connected shop lands in Postgres within minutes, idempotently. | 7 |
 | [Sprint 3 — OMS API & order UI](https://github.com/GRITui/tiktok-api/issues/4) | Ops staff can find, filter and inspect orders across shops. | 5 |
-| [Sprint 4 — Fulfillment](https://github.com/GRITui/tiktok-api/issues/5) | Ship orders from the OMS using TikTok Shipping labels or own 3PL. | 6 |
-| [Sprint 5 — Cancellations, returns & refunds](https://github.com/GRITui/tiktok-api/issues/6) | Handle the after-sales lifecycle inside the OMS. | 5 |
-| [Sprint 6 — Inventory, products & finance](https://github.com/GRITui/tiktok-api/issues/7) | Connect orders to SKUs and money. | 4 |
-| [Sprint 7 — Hardening & launch](https://github.com/GRITui/tiktok-api/issues/8) | Production-ready: observable, recoverable, reviewed. | 5 |
+| [Sprint 4 — Fulfillment I: TikTok Shipping](https://github.com/GRITui/tiktok-api/issues/5) | Ship and label orders with TikTok Shipping, singly or in bulk. | 12 |
+| [Sprint 5 — Fulfillment II: Seller shipping & exceptions](https://github.com/GRITui/tiktok-api/issues/51) | Own-carrier shipping, split/combine, pick/pack, SLA alerts, exceptions, FBT. | 12 |
+| [Sprint 6 — Cancellations, returns & refunds](https://github.com/GRITui/tiktok-api/issues/6) | Handle the after-sales lifecycle inside the OMS. | 5 |
+| [Sprint 7 — Inventory, products & finance](https://github.com/GRITui/tiktok-api/issues/7) | Connect orders to SKUs and money. | 4 |
+| [Sprint 8 — Hardening & launch](https://github.com/GRITui/tiktok-api/issues/8) | Production-ready: observable, recoverable, reviewed. | 5 |
 
 ## Sprint 0 — Foundation & API access (#1)
 
@@ -56,18 +69,47 @@ with the same sprint label and an area label. GitHub issues are the source of tr
 - [ ] #29 **Shop connection management UI** `ui` — A page to connect a shop, see connection/token status, last sync time and backfill progress, and trigger a re-sync.
 - [ ] #30 **Order export (CSV)** `api` — Export the filtered order list to CSV through a background job, with a download link.
 
-## Sprint 4 — Fulfillment (#5)
+## Sprint 4 — Fulfillment I: TikTok Shipping end-to-end (#5)
 
-**Goal:** Ship orders from the OMS using TikTok Shipping labels or own 3PL.
+**Goal:** Ops can take an AWAITING_SHIPMENT order, ship it with TikTok Shipping (platform logistics) and print its label, singly or in bulk.
 
-- [ ] #31 **Package split/combine support** `fulfillment` — Read split attributes and support splitting an order into packages or combining eligible orders before shipping.
-- [ ] #32 **Ship package with TikTok Shipping (4PL)** `fulfillment` — Ship packages and generate labels with the platform logistics provider, including pickup/drop-off handover options.
-- [ ] #33 **Print shipping labels and packing slips** `fulfillment` — Fetch shipping documents (label, packing slip) per package and merge them into one PDF for batch printing.
-- [ ] #34 **Seller-shipped (3PL) tracking upload** `fulfillment` — For seller-shipped orders, pick a shipping provider (Logistics API) and upload tracking numbers, singly or by CSV.
-- [ ] #35 **PACKAGE_UPDATE webhook handling** `webhooks` — Update `packages` status and tracking from PACKAGE_UPDATE pushes and order detail.
-- [ ] #36 **Warehouse and delivery option sync** `fulfillment` — Sync seller warehouses and delivery options from the Logistics API for use in shipping flows.
+Listed in suggested build order: data and SDK first, then the shared guards, then the ship flows and UI.
 
-## Sprint 5 — Cancellations, returns & refunds (#6)
+| # | Story | Layer | Priority | Size | Mode |
+| --- | --- | --- | --- | --- | --- |
+| #36 | Warehouse, delivery option & shipping provider sync | `worker` | P0 | M | — |
+| #52 | SDK: package and shipping endpoints | `sdk` | P0 | M | — |
+| #53 | Package data model and order–package sync | `db` | P0 | M | — |
+| #35 | PACKAGE_UPDATE webhook handling | `webhooks` | P0 | S | — |
+| #59 | Idempotency and audit for fulfillment actions | `api` | P0 | S | — |
+| #54 | Pre-ship validation guard | `api` | P0 | S | — |
+| #55 | "To ship" queue API | `api` | P0 | S | — |
+| #32 | Ship a package with TikTok Shipping (single) | `api` | P0 | M | tiktok |
+| #58 | Batch ship job with partial-failure handling | `worker` | P0 | M | tiktok |
+| #33 | Print shipping labels and packing slips (batch PDF) | `worker` | P0 | M | tiktok |
+| #56 | Fulfillment workbench UI | `ui` | P0 | M | — |
+| #57 | Handover method and pickup time slots | `api` | P1 | S | tiktok |
+
+## Sprint 5 — Fulfillment II: Seller shipping, split/combine & exceptions (#51)
+
+**Goal:** Own-carrier (seller) shipping, package split/combine, internal pick/pack, SLA alerts, exception handling and FBT visibility, verified by an end-to-end sandbox suite.
+
+| # | Story | Layer | Priority | Size | Mode |
+| --- | --- | --- | --- | --- | --- |
+| #34 | Ship with own carrier (seller shipping): provider + tracking | `api` | P0 | M | seller |
+| #69 | Fulfillment end-to-end tests against sandbox | `infra` | P0 | M | — |
+| #31 | Split an order into multiple packages | `api` | P1 | M | — |
+| #62 | Combine and uncombine packages | `api` | P1 | M | — |
+| #60 | Bulk tracking import (CSV) for seller shipping | `ui` | P1 | S | seller |
+| #61 | Correct tracking info after shipping | `api` | P1 | S | seller |
+| #63 | Pick lists and internal pick/pack states | `api` | P1 | M | — |
+| #65 | Ship-by SLA alerts and late-shipment metric | `worker` | P1 | S | — |
+| #66 | Fulfillment exception queue | `worker` | P1 | M | — |
+| #64 | Scan-to-verify packing | `ui` | P2 | M | — |
+| #67 | Fulfilled by TikTok (FBT) orders: read-only view | `api` | P2 | S | fbt |
+| #68 | Proof of delivery upload (where required) | `api` | P2 | S | seller |
+
+## Sprint 6 — Cancellations, returns & refunds (#6)
 
 **Goal:** Handle the after-sales lifecycle inside the OMS.
 
@@ -77,7 +119,7 @@ with the same sprint label and an area label. GitHub issues are the source of tr
 - [ ] #40 **Sync returns and refunds** `after-sales` — Store return/refund requests (RETURN_STATUS_CHANGE webhook plus search poll) with their status timeline.
 - [ ] #41 **Approve/reject returns and refunds** `after-sales` — Review actions for returns, including partial refunds where supported.
 
-## Sprint 6 — Inventory, products & finance (#7)
+## Sprint 7 — Inventory, products & finance (#7)
 
 **Goal:** Connect orders to SKUs and money.
 
@@ -86,7 +128,7 @@ with the same sprint label and an area label. GitHub issues are the source of tr
 - [ ] #44 **Finance: statements and settlements** `finance` — Sync statements, payments and per-order transactions from the Finance API for reconciliation.
 - [ ] #45 **Reports: sales, fulfillment SLA, cancellations** `ui` — Dashboards for orders/day, GMV by shop, late-shipment rate and cancellation/return rate.
 
-## Sprint 7 — Hardening & launch (#8)
+## Sprint 8 — Hardening & launch (#8)
 
 **Goal:** Production-ready: observable, recoverable, reviewed.
 
