@@ -9,3 +9,5 @@ export * from "./endpoints/authorization.js";
 export * from "./endpoints/orders.js";
 export * from "./endpoints/fulfillment.js";
 export * from "./endpoints/returns.js";
+export * from "./endpoints/logistics.js";
+export * from "./endpoints/events.js";

@@ -1,5 +1,5 @@
 {
-  "name": "@oms/db",
+  "name": "@oms/core",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -15,21 +15,24 @@
       "@oms/source": "./src/testing.ts",
       "types": "./dist/testing.d.ts",
       "default": "./dist/testing.js"
+    },
+    "./types": {
+      "@oms/source": "./src/oms/types.ts",
+      "types": "./dist/oms/types.d.ts",
+      "default": "./dist/oms/types.js"
     }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "echo 'no tests yet'",
-    "generate": "drizzle-kit generate",
-    "migrate": "tsx src/migrate.ts"
+    "test": "vitest run"
   },
   "dependencies": {
+    "@oms/db": "workspace:*",
+    "@oms/tiktok-sdk": "workspace:*",
     "drizzle-orm": "^0.45.0",
-    "postgres": "^3.4.0",
-    "@electric-sql/pglite": "^0.3.0"
-  },
-  "devDependencies": {
-    "drizzle-kit": "^0.31.0"
+    "ioredis": "^5.4.0",
+    "pdf-lib": "^1.17.1",
+    "bullmq": "^5.0.0"
   }
 }

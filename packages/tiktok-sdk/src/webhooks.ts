@@ -7,6 +7,8 @@ export const WebhookType = {
   RECIPIENT_ADDRESS_UPDATE: 3,
   PACKAGE_UPDATE: 4,
   PRODUCT_STATUS_CHANGE: 5,
+  /** Seller revoked the app authorization. VERIFY number. */
+  SELLER_DEAUTHORIZATION: 6,
   CANCELLATION_STATUS_CHANGE: 11,
   RETURN_STATUS_CHANGE: 12,
 } as const;

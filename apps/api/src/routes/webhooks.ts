@@ -1,26 +1,27 @@
-import type { FastifyInstance } from "fastify";
+import type { Deps } from "@oms/core";
 import { verifyWebhookSignature, type WebhookEnvelope } from "@oms/tiktok-sdk";
-import type { Config } from "../config.js";
+import type { FastifyInstance } from "fastify";
 
 /**
- * Receives TikTok Shop webhook pushes. Must ACK fast: verify, persist, enqueue, return 200.
- * TODO(Sprint 2): insert into webhook_events (dedupe on tts_notification_id) and enqueue processing job.
+ * LANE D — webhook receiver (#19). Verify, persist (ingestWebhook), ACK fast.
+ * Must stay unauthenticated (no requireRole); signature is the auth.
  */
-export async function webhookRoutes(app: FastifyInstance, opts: { config: Config }) {
+export async function webhookRoutes(app: FastifyInstance, opts: { deps: Deps }) {
   app.addContentTypeParser("application/json", { parseAs: "string" }, (_req, body, done) => done(null, body));
 
   app.post("/webhooks/tiktok", async (req, reply) => {
     const rawBody = req.body as string;
     const ok = verifyWebhookSignature({
-      appKey: opts.config.TTS_APP_KEY,
-      appSecret: opts.config.TTS_APP_SECRET,
+      appKey: opts.deps.config.appKey,
+      appSecret: opts.deps.config.appSecret,
       rawBody,
       signature: req.headers.authorization,
     });
-    if (!ok) return reply.code(401).send({ error: "invalid signature" });
+    if (!ok) return reply.code(401).send({ error: { code: "invalid_signature", message: "invalid signature" } });
 
     const event = JSON.parse(rawBody) as WebhookEnvelope;
     req.log.info({ type: event.type, shopId: event.shop_id, id: event.tts_notification_id }, "webhook received");
+    // TODO(LANE D): await ingestWebhook(opts.deps, event)
     return reply.code(200).send({ ok: true });
   });
 }

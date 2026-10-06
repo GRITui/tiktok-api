@@ -13,6 +13,8 @@
     "@oms/db": "workspace:*",
     "@oms/tiktok-sdk": "workspace:*",
     "fastify": "^5.6.0",
-    "zod": "^4.0.0"
+    "zod": "^4.0.0",
+    "@oms/core": "workspace:*",
+    "@fastify/cookie": "^11.0.0"
   }
 }
