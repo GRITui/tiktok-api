@@ -823,7 +823,7 @@ export async function runLabelJob(deps: Deps, jobId: string): Promise<void> {
       for (let j = 0; j < pages_.length; j++) {
         const page = pages_[j];
         if (page && embeddedPages[j]) {
-          const embeddedPage = embeddedPages[j];
+          const embeddedPage = embeddedPages[j]!;
           const newPage = mergedPdf.addPage([embeddedPage.width, embeddedPage.height]);
           newPage.drawPage(embeddedPage);
         }
